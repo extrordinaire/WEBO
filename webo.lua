@@ -43,55 +43,61 @@ local inventory = {}
 local warehouse = {}
 
 
-local function update_inventory()
+local function update_inventory_parallel()
+  local tasks = {}
+
   for _, inv in ipairs(storageList) do
-    local invSize = inv.size()
+    local task = function()
+      local invSize = inv.size()
+      local inv_name = peripheral.getName(inv)
 
-    local inv_name = peripheral.getName(inv)
+      warehouse[inv_name] = storage:init({ size = invSize })
 
-    warehouse[inv_name] = storage:init({ size = invSize })
+      for slot = 1, invSize do
+        local detail = inv.getItemDetail(slot)
+        if detail then
+          warehouse[inv_name]:deposit({ slot = slot })
 
-    for slot = 1, invSize do
-      local detail = inv.getItemDetail(slot)
-      --pretty.pretty_print(detail)
-      if detail then
-        warehouse[inv_name]:deposit({ slot = slot })
-
-        local item_name = string.lower(detail.name):gsub(":", ".")
-        if not inventory[item_name] then
-          inventory[item_name] = {
-            name = detail.name:gsub(":", "."),
-            displayName = detail.displayName,
-            allocation = {
-              {
-                storage = inv_name,
-                slot = slot,
-                count = detail.count,
-              }
-            },
-            count = detail.count,
-            maxCount = detail.maxCount,
-          }
+          local item_name = string.lower(detail.name):gsub(":", ".")
+          if not inventory[item_name] then
+            inventory[item_name] = {
+              name = detail.name:gsub(":", "."),
+              displayName = detail.displayName,
+              allocation = {
+                {
+                  storage = inv_name,
+                  slot = slot,
+                  count = detail.count,
+                }
+              },
+              count = detail.count,
+              maxCount = detail.maxCount,
+            }
+          else
+            table.insert(inventory[item_name].allocation, {
+              storage = inv_name,
+              slot = slot,
+              count = detail.count,
+            })
+            inventory[item_name].count = inventory[item_name].count + detail.count
+          end
         else
-          table.insert(inventory[item_name].allocation, {
-            storage = inv_name,
-            slot = slot,
-            count = detail.count,
-          })
-          inventory[item_name].count = inventory[item_name].count + detail.count
+          warehouse[inv_name]:withdraw({ slot = slot })
         end
-      else
-        warehouse[inv_name]:withdraw({ slot = slot })
       end
     end
+
+    table.insert(tasks, task)
   end
+
+  parallel.waitForAny(unpack(tasks))
 
   inventory_file = fs.open("/inventory.yml", "w+")
   inventory_file.write(yml_utils.serialize({ table = inventory }))
   inventory_file.close()
 end
 
-update_inventory()
+update_inventory_parallel()
 
 table.sort(inventory, function(a, b)
   return a.displayName < b.displayName
