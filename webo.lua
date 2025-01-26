@@ -313,145 +313,122 @@ function UPDATE_LIST()
 end
 
 function UPLOAD_TURTLE_INVENTORY()
-  turtle_inventory = {}
+  -- Group turtle slots by item name
+  local items_by_name = {}
   for turtle_slot = 1, 16 do
     turtle.select(turtle_slot)
     local item_info = turtle.getItemDetail(turtle_slot, true)
     if item_info then
-      turtle_inventory[turtle_slot] = item_info
+      local name = string.lower(item_info.name):gsub(":", ".")
+      if not items_by_name[name] then
+        items_by_name[name] = {
+          displayName = item_info.displayName,
+          maxCount = item_info.maxCount,
+          slots = {},
+        }
+      end
+      table.insert(items_by_name[name].slots, { slot = turtle_slot, count = item_info.count })
     end
   end
 
-  local debug_file = fs.open("/debug.yml", 'w')
-  debug_file.write(yml_utils.serialize({ table = turtle_inventory }))
-  debug_file.close()
+  -- Create parallel tasks for each item type
+  local tasks = {}
+  for item_name, data in pairs(items_by_name) do
+    local task = function()
+      for _, slot_data in ipairs(data.slots) do
+        local turtle_slot = slot_data.slot
+        local remaining_to_push = slot_data.count
 
-  for turtle_slot, item in pairs(turtle_inventory) do
-    local remaining_to_push = item.count
+        while remaining_to_push > 0 do
+          local pushed = false
 
-    local item_name = string.lower(item.name):gsub(":", ".")
+          -- Try to push to existing slots with same item
+          for _, inv in ipairs(storageList) do
+            local inv_name = peripheral.getName(inv)
+            local items = inv.list()
 
-    if not inventory[item_name] then
-      for inv_name, storage_unit in pairs(warehouse) do
-        if storage_unit:is_full() then
-          goto continue
-        end
+            -- Check existing allocations for this item
+            for slot, existing_item in pairs(items) do
+              if existing_item.name == data.displayName and existing_item.count < existing_item.maxCount then
+                local space = existing_item.maxCount - existing_item.count
+                local to_push = math.min(space, remaining_to_push)
+                local transferred = inv.pullItems(TURTLE_NAME, turtle_slot, to_push, slot)
 
-        local inv = peripheral.wrap(inv_name)
-        -- Handle first slot separately
-        local first_slot = storage_unit:get_empty_slot()
-        local pushed_count = inv.pullItems(TURTLE_NAME, turtle_slot, remaining_to_push, first_slot)
+                if transferred > 0 then
+                  -- Update inventory atomically for this item
+                  if not inventory[item_name] then
+                    inventory[item_name] = {
+                      name = item_name,
+                      displayName = data.displayName,
+                      allocation = {},
+                      count = 0,
+                      maxCount = data.maxCount,
+                    }
+                  end
 
-        if pushed_count > 0 then
-          -- Only update slot states if items were actually moved
-          storage_unit:deposit({ slot = first_slot })
-
-          inventory[item_name] = {
-            name = item_name,
-            displayName = item.displayName,
-            allocation = {
-              {
-                storage = inv_name,
-                slot = first_slot,
-                count = pushed_count,
-              }
-            },
-            count = pushed_count,
-            maxCount = item.maxCount,
-          }
-
-          local inv_allocation_debug = fs.open("/inv_allocation_debug.yml", 'w')
-          inv_allocation_debug.write(yml_utils.serialize({ table = inventory[item_name].allocation }))
-          inv_allocation_debug.close()
-
-          remaining_to_push = remaining_to_push - pushed_count
-
-          -- Process remaining slots if needed
-          if remaining_to_push > 0 then
-            while not storage_unit:is_full() do
-              local slot = storage_unit:get_empty_slot()
-              local got = inv.pullItems(TURTLE_NAME, turtle_slot, remaining_to_push, slot)
-
-              if got > 0 then
-                -- Update inventory and warehouse data
-                table.insert(inventory[item_name].allocation, {
-                  storage = inv_name,
-                  slot = slot,
-                  count = got,
-                })
-
-                inventory[item_name].count = inventory[item_name].count + got
-                remaining_to_push = remaining_to_push - got
-
-                -- Update slot states
-                storage_unit:deposit({ slot = slot })
-                if remaining_to_push <= 0 then
-                  break
+                  -- Update existing allocation or add new
+                  local found = false
+                  for _, alloc in ipairs(inventory[item_name].allocation) do
+                    if alloc.storage == inv_name and alloc.slot == slot then
+                      alloc.count = alloc.count + transferred
+                      found = true
+                      break
+                    end
+                  end
+                  if not found then
+                    table.insert(inventory[item_name].allocation, {
+                      storage = inv_name,
+                      slot = slot,
+                      count = transferred,
+                    })
+                  end
+                  inventory[item_name].count = inventory[item_name].count + transferred
+                  remaining_to_push = remaining_to_push - transferred
+                  pushed = true
                 end
               end
+              if remaining_to_push == 0 then break end
             end
-          end
-        end
+            if remaining_to_push == 0 then break end
 
-        ::continue::
-      end
-    end
-
-    if inventory[item_name] and remaining_to_push > 0 then
-      for _, allocation in ipairs(inventory[item_name].allocation) do
-        if allocation.quantity == item.maxCount then
-          goto continue
-        end
-
-        local inv = peripheral.wrap(allocation.storage)
-        local got = inv.pullItems(TURTLE_NAME, turtle_slot, remaining_to_push, allocation.slot)
-        remaining_to_push = remaining_to_push - got
-
-        if got > 0 then
-          allocation.count = allocation.count + got
-          inventory[item_name].count = inventory[item_name].count + got
-        end
-
-        if remaining_to_push == 0 then
-          break
-        end
-
-        ::continue::
-      end
-
-      if remaining_to_push > 0 then
-        for inventory_name, storage_unit in pairs(warehouse) do
-          local wrapped_storage = peripheral.wrap(inventory_name)
-
-          if storage_unit:is_full() then
-            goto continue
-          end
-          while not storage_unit:is_full() do
-            local free_slot = storage_unit:get_empty_slot()
-            local got = wrapped_storage.pullItems(TURTLE_NAME, turtle_slot, remaining_to_push, free_slot)
-
-            inventory[item_name].count = inventory[item_name].count + got
-
-            table.insert(inventory[item_name].allocation, {
-              storage = peripheral.getName(wrapped_storage),
-              slot = free_slot,
-              count = got,
-            })
-
-            remaining_to_push = remaining_to_push - got
-
-            storage_unit:deposit({ slot = free_slot })
-            if remaining_to_push == 0 then
-              break
+            -- Find empty slots for new allocations
+            for slot = 1, inv.size() do
+              if not items[slot] then
+                local transferred = inv.pullItems(TURTLE_NAME, turtle_slot, remaining_to_push, slot)
+                if transferred > 0 then
+                  if not inventory[item_name] then
+                    inventory[item_name] = {
+                      name = item_name,
+                      displayName = data.displayName,
+                      allocation = {},
+                      count = 0,
+                      maxCount = data.maxCount,
+                    }
+                  end
+                  table.insert(inventory[item_name].allocation, {
+                    storage = inv_name,
+                    slot = slot,
+                    count = transferred,
+                  })
+                  inventory[item_name].count = inventory[item_name].count + transferred
+                  remaining_to_push = remaining_to_push - transferred
+                  pushed = true
+                end
+              end
+              if remaining_to_push == 0 then break end
             end
+            if remaining_to_push == 0 then break end
           end
 
-          ::continue::
+          if not pushed then break end -- No more space
         end
       end
     end
+    table.insert(tasks, task)
   end
 
+  -- Execute all item processing in parallel
+  parallel.waitForAll(unpack(tasks))
   UPDATE_LIST()
 end
 
