@@ -45,11 +45,13 @@ local warehouse = {}
 
 local function update_inventory_parallel()
   local tasks = {}
+  local task_results = {}
 
   for _, inv in ipairs(storageList) do
     local task = function()
       local invSize = inv.size()
       local inv_name = peripheral.getName(inv)
+      local local_inventory = {}
 
       warehouse[inv_name] = storage:init({ size = invSize })
 
@@ -59,8 +61,8 @@ local function update_inventory_parallel()
           warehouse[inv_name]:deposit({ slot = slot })
 
           local item_name = string.lower(detail.name):gsub(":", ".")
-          if not inventory[item_name] then
-            inventory[item_name] = {
+          if not local_inventory[item_name] then
+            local_inventory[item_name] = {
               name = detail.name:gsub(":", "."),
               displayName = detail.displayName,
               allocation = {
@@ -74,23 +76,38 @@ local function update_inventory_parallel()
               maxCount = detail.maxCount,
             }
           else
-            table.insert(inventory[item_name].allocation, {
+            table.insert(local_inventory[item_name].allocation, {
               storage = inv_name,
               slot = slot,
               count = detail.count,
             })
-            inventory[item_name].count = inventory[item_name].count + detail.count
+            local_inventory[item_name].count = local_inventory[item_name].count + detail.count
           end
         else
           warehouse[inv_name]:withdraw({ slot = slot })
         end
       end
+
+      task_results[inv_name] = local_inventory
     end
 
     table.insert(tasks, task)
   end
 
-  parallel.waitForAny(unpack(tasks))
+  parallel.waitForAll(unpack(tasks))
+
+  for _, local_inventory in pairs(task_results) do
+    for item_name, item_data in pairs(local_inventory) do
+      if not inventory[item_name] then
+        inventory[item_name] = item_data
+      else
+        for _, alloc in ipairs(item_data.allocation) do
+          table.insert(inventory[item_name].allocation, alloc)
+        end
+        inventory[item_name].count = inventory[item_name].count + item_data.count
+      end
+    end
+  end
 
   inventory_file = fs.open("/inventory.yml", "w+")
   inventory_file.write(yml_utils.serialize({ table = inventory }))
