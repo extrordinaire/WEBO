@@ -3,9 +3,13 @@ local expect, field = expect.expect, expect.field
 
 local utils = {}
 
--- filter function: takes a table and a predicate function
--- @param params: table with keys: table, pred: () => boolean
+--- filter function: takes a table and a predicate function
+--- @param params {table: table, pred: fun(value: any, key: any): boolean}
 function utils.filter(params)
+  expect(1, params, "table")
+  field(params, "table", "table")
+  field(params, "pred", "function")
+
   local result = {}
   for i, v in pairs(params.table) do
     if params.pred(v, i) then
@@ -37,6 +41,10 @@ end
 -- find function: takes a table and a predicate function
 -- @param params: array-like table with keys: table, pred: () => boolean
 function utils.find_and_remove(params)
+  expect(1, params, "table")
+  field(params, "table", "table")
+  field(params, "pred", "function")
+
   for i, v in ipairs(params.table) do
     if params.pred(v, i) then
       table.remove(params.table, i)

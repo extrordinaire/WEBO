@@ -1,16 +1,19 @@
 local expect = require "cc.expect"
-local expect, field = expect.expect, expect.field
-
 local utils = require "utils"
 
+--- @class Storage
+--- @field size number The size of the storage
+--- @field occupied_slots boolean[]
 local storage = {
-  size = nil,
+  size = 0,
   occupied_slots = {},
 }
 
+--- @param params {size: number}
+--- @return Storage
 function storage:init(params)
-  expect(1, params, "table")
-  field(params, "size", "number")
+  expect.expect(1, params, "table")
+  expect.field(params, "size", "number")
 
   local initialized_occupied_slots = {}
   for i = 1, params.size do
@@ -27,9 +30,10 @@ function storage:init(params)
   return obj
 end
 
+--- @param params {slot: number}
 function storage:deposit(params)
-  expect(1, params, "table")
-  field(params, "slot", "number")
+  expect.expect(1, params, "table")
+  expect.field(params, "slot", "number")
 
   if self.occupied_slots[params.slot] then
     return false
@@ -39,9 +43,10 @@ function storage:deposit(params)
   return true
 end
 
+--- @param params {slot: number}
 function storage:withdraw(params)
-  expect(1, params, "table")
-  field(params, "slot", "number")
+  expect.expect(1, params, "table")
+  expect.field(params, "slot", "number")
 
   if not self.occupied_slots[params.slot] then
     return false
@@ -51,6 +56,7 @@ function storage:withdraw(params)
   return true
 end
 
+--- @return boolean
 function storage:is_full()
   return utils.table_every({
     table = self.occupied_slots,
@@ -58,6 +64,7 @@ function storage:is_full()
   })
 end
 
+--- @return boolean
 function storage:is_empty()
   return utils.table_every({
     table = self.occupied_slots,
@@ -65,6 +72,7 @@ function storage:is_empty()
   })
 end
 
+--- @return number?
 function storage:get_empty_slot()
   for i, v in ipairs(self.occupied_slots) do
     if not v then
